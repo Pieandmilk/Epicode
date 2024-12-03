@@ -1,0 +1,8 @@
+main{
+    var a = input("Enter a number.");
+    var b = input("Enter another number.");
+
+    var anwser = (2 * (3 + a) - (2 / b)) - 2;
+
+    print("Answer: " + anwser);
+}

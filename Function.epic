@@ -1,0 +1,14 @@
+action fibonacci_recursive_term(n) {
+    if (n <= 0) {
+        return 0;
+    } elif (n == 1) {
+        return 1;
+    } else {
+        return fibonacci_recursive_term(n - 1) + fibonacci_recursive_term(n - 2);
+    }
+}
+
+main {
+    var result = fibonacci_recursive_term(5);
+    print("Fibonacci: " + result);
+}
