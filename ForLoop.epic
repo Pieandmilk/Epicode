@@ -1,7 +1,7 @@
 main{
-    array numbers = {1, 2, 3, 4, 5};
+    array numbers[5] = {1, 2, 3, 4, 5};
 
     for (var i = 0;i < numbers.length();i=i+1){
-        print("The numbers is: " + numbers[i])
+        print("The numbers is: " + numbers[i]);
     }
 }

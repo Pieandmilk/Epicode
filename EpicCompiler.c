@@ -8,7 +8,7 @@ typedef enum {
     TOKEN_VAR, TOKEN_ACTION, TOKEN_MAIN, TOKEN_IF,TOKEN_ELIF, TOKEN_ELSE, TOKEN_WHILE, TOKEN_FOR,
     TOKEN_PRINT, TOKEN_INPUT, TOKEN_RETURN, TOKEN_IDENTIFIER, TOKEN_NUMBER,
     TOKEN_STRING_LITERAL, TOKEN_OPERATOR, TOKEN_COMPARATOR,TOKEN_LOGICAL_OPERATOR, TOKEN_LPAREN, TOKEN_RPAREN,
-    TOKEN_LBRACE, TOKEN_RBRACE, TOKEN_SEMICOLON, TOKEN_COMMA, TOKEN_ASSIGN, TOKEN_EOF
+    TOKEN_LBRACE, TOKEN_RBRACE,TOKEN_LBRACKET,TOKEN_RBRACKET, TOKEN_SEMICOLON, TOKEN_COMMA,TOKEN_DOT, TOKEN_ASSIGN,TOKEN_ARRAY, TOKEN_EOF
 } TokenType;
 
 // Token structure
@@ -20,6 +20,58 @@ typedef struct {
 // Global variables
 char *sourceCode;
 int currentPos = 0;
+
+
+
+void cleanContent() {
+    // Find the last occurrence of '}'
+    char *lastBrace = strrchr(sourceCode, '}');
+    
+    if (lastBrace != NULL) {
+        // Null-terminate the string right after the last '}'
+        *(lastBrace + 1) = '\0';
+    }
+}
+
+void readFile(const char *filename) {
+    // Open the file for reading
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Error opening file: %s\n", filename);
+        exit(1); // Exit if the file cannot be opened
+    }
+
+    // Get the file size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    // Allocate memory to store the file content
+    sourceCode = (char *)malloc(fileSize + 1); // +1 for the null-terminator
+    if (sourceCode == NULL) {
+        printf("Memory allocation error!\n");
+        exit(1); // Exit if memory cannot be allocated
+    }
+
+    // Read the file content into sourceCode
+    fread(sourceCode, 1, fileSize, file);
+    sourceCode[fileSize] = '\0'; // Null-terminate the string
+
+    // Clean the content (remove unnecessary characters after the last '}')
+    cleanContent();
+
+    // Close the file
+    fclose(file);
+}
+
+
+
+
+
+
+
+
+
 
 // Function prototypes
 Token getNextToken();
@@ -51,6 +103,9 @@ Token getNextToken() {
         strcpy(token.lexeme, "EOF");
         return token;
     }
+    // Debug print
+    printf("DEBUG getNextToken: Current character: '%c' at position %d\n", 
+           sourceCode[currentPos], currentPos);
     
     // Logical operators
     if (sourceCode[currentPos] == '&' && sourceCode[currentPos + 1] == '&') {
@@ -81,6 +136,7 @@ Token getNextToken() {
 
         // Check for keywords
         if (strcmp(token.lexeme, "var") == 0) token.type = TOKEN_VAR;
+        else if (strcmp(token.lexeme, "array") == 0) token.type = TOKEN_ARRAY;
         else if (strcmp(token.lexeme, "action") == 0) token.type = TOKEN_ACTION;
         else if (strcmp(token.lexeme, "main") == 0) token.type = TOKEN_MAIN;
         else if (strcmp(token.lexeme, "if") == 0) token.type = TOKEN_IF;
@@ -157,10 +213,13 @@ Token getNextToken() {
 		    break;
         case '(': token.type = TOKEN_LPAREN; strcpy(token.lexeme, "("); break;
         case ')': token.type = TOKEN_RPAREN; strcpy(token.lexeme, ")"); break;
+        case '[': token.type = TOKEN_LBRACKET; strcpy(token.lexeme, "["); break;
+        case ']': token.type = TOKEN_RBRACKET; strcpy(token.lexeme, "]"); break;
         case '{': token.type = TOKEN_LBRACE; strcpy(token.lexeme, "{"); break;
         case '}': token.type = TOKEN_RBRACE; strcpy(token.lexeme, "}"); break;
         case ';': token.type = TOKEN_SEMICOLON; strcpy(token.lexeme, ";"); break;
         case ',': token.type = TOKEN_COMMA; strcpy(token.lexeme, ","); break;
+        case '.': token.type = TOKEN_DOT; strcpy(token.lexeme, "."); break;
         default:
             error("Unexpected character");
     }
@@ -202,6 +261,12 @@ void parseControlFlow();
 void parseWhile();
 void parseCondition();
 void match(TokenType expectedType);
+void parseInput();
+void parseArguments();
+void parseArrayDecl();
+void parseArrayAccess();
+void parseArrayElements();
+void parseFor();
 void error(const char *message);
 
 // Get the next token from the lexer
@@ -254,7 +319,8 @@ void parseStatements() {
     while (currentToken.type == TOKEN_VAR || currentToken.type == TOKEN_PRINT || 
            currentToken.type == TOKEN_IDENTIFIER || currentToken.type == TOKEN_RETURN ||
            currentToken.type == TOKEN_IF || currentToken.type == TOKEN_WHILE || 
-           currentToken.type == TOKEN_FOR || currentToken.type == TOKEN_ACTION) { // Added TOKEN_ACTION here
+           currentToken.type == TOKEN_FOR || currentToken.type == TOKEN_ACTION||
+		   currentToken.type == TOKEN_ARRAY || currentToken.type == TOKEN_ASSIGN) { 
         parseStatement();
     }
 }
@@ -268,6 +334,10 @@ void parseStatement() {
         parseActionDecl();  // Allow action declarations within blocks
     } else if (currentToken.type == TOKEN_PRINT) {
 		parsePrint();
+    }else if (currentToken.type == TOKEN_ARRAY) {
+		parseArrayDecl();
+    } else if (currentToken.type == TOKEN_FOR) {
+		parseFor();
     } else if (currentToken.type == TOKEN_IDENTIFIER) {
         // This can be an assignment or a function call
         advance();  // Consume the identifier
@@ -312,6 +382,8 @@ void parseVarDecl() {
     match(TOKEN_SEMICOLON);
 }
 
+
+
 // Parse <Assign>
 void parseAssign(){
 	match(TOKEN_ASSIGN);
@@ -324,7 +396,7 @@ void parseActionDecl() {
     match(TOKEN_ACTION);
     match(TOKEN_IDENTIFIER);
     match(TOKEN_LPAREN);
-    // Handle parameters here (if necessary)
+    parseArguments();
     match(TOKEN_RPAREN);
     match(TOKEN_LBRACE);
     parseStatements();
@@ -334,24 +406,97 @@ void parseActionDecl() {
 // Parse <Expression>
 void parseExpression() {
     // Handle the first operand
-    if (currentToken.type == TOKEN_NUMBER || currentToken.type == TOKEN_STRING_LITERAL || 
-        currentToken.type == TOKEN_IDENTIFIER) {
-        advance();  // Consume the token
-    } else if (currentToken.type == TOKEN_LPAREN) { // Handle sub-expression
+    if (currentToken.type == TOKEN_NUMBER || 
+        currentToken.type == TOKEN_STRING_LITERAL || 
+        currentToken.type == TOKEN_IDENTIFIER || 
+        currentToken.type == TOKEN_INPUT) {
+        
+        // Handle input
+        if (currentToken.type == TOKEN_INPUT) {
+            advance(); // Consume the 'input' token
+            match(TOKEN_LPAREN);
+            if (currentToken.type == TOKEN_STRING_LITERAL) {
+                advance(); // Consume prompt string
+            }
+            match(TOKEN_RPAREN);
+        } else {
+            advance();  // Consume the token
+        }
+
+        // Handle potential array access
+        if (currentToken.type == TOKEN_LBRACKET) {
+            parseArrayAccess();
+        }
+
+        // Handle potential action/method calls and method chaining
+        while (currentToken.type == TOKEN_DOT || currentToken.type == TOKEN_LPAREN) {
+            if (currentToken.type == TOKEN_DOT) {
+                match(TOKEN_DOT);
+                if (currentToken.type == TOKEN_IDENTIFIER) {
+                    advance(); // Consume method name
+                    
+                    // Optional method call with parentheses
+                    if (currentToken.type == TOKEN_LPAREN) {
+                        match(TOKEN_LPAREN);
+                        // Optional arguments
+                        if (currentToken.type != TOKEN_RPAREN) {
+                            parseExpression(); // Parse first argument
+                            while (currentToken.type == TOKEN_COMMA) {
+                                match(TOKEN_COMMA);
+                                parseExpression();
+                            }
+                        }
+                        match(TOKEN_RPAREN);
+                    }
+                } else {
+                    error("Expected method name after '.'");
+                }
+            } 
+            // Handle action/function calls
+            else if (currentToken.type == TOKEN_LPAREN) {
+                match(TOKEN_LPAREN);
+                // Optional arguments
+                if (currentToken.type != TOKEN_RPAREN) {
+                    parseExpression(); // Parse first argument
+                    while (currentToken.type == TOKEN_COMMA) {
+                        match(TOKEN_COMMA);
+                        parseExpression();
+                    }
+                }
+                match(TOKEN_RPAREN);
+            }
+        }
+    } 
+    // Handle parenthesized sub-expressions
+    else if (currentToken.type == TOKEN_LPAREN) {
         match(TOKEN_LPAREN);
         parseExpression();
         match(TOKEN_RPAREN);
-    } else {
+    } 
+    else {
         error("Invalid expression");
     }
 
     // Handle operators and subsequent operands
-    while (currentToken.type == TOKEN_OPERATOR || currentToken.type == TOKEN_COMPARATOR || 
+    while (currentToken.type == TOKEN_OPERATOR || 
+           currentToken.type == TOKEN_COMPARATOR || 
            currentToken.type == TOKEN_LOGICAL_OPERATOR) {
         advance();  // Consume the operator
         parseExpression();  // Parse the next operand or sub-expression
     }
 }
+
+// Helper function to parse arguments for method calls or action calls
+void parseArguments() {
+    if (currentToken.type != TOKEN_RPAREN) { // If there are arguments
+        parseExpression(); // Parse the first argument
+        while (currentToken.type == TOKEN_COMMA) { // Handle additional arguments
+            match(TOKEN_COMMA);
+            parseExpression();
+        }
+    }
+}
+
 
 //Parse <Return>
 void parseReturn(){
@@ -416,6 +561,32 @@ void parseCondition() {
              currentToken.type == TOKEN_STRING_LITERAL || 
              currentToken.type == TOKEN_IDENTIFIER) {
         advance();  // Consume the operand
+
+        // Handle dot notation (e.g., numbers.length)
+        while (currentToken.type == TOKEN_DOT) {
+            advance();  // Consume the '.'
+            if (currentToken.type == TOKEN_IDENTIFIER) {
+                advance();  // Consume the property/method name
+
+                // Handle method calls (e.g., length())
+                if (currentToken.type == TOKEN_LPAREN) {
+                    match(TOKEN_LPAREN);
+
+                    // Optionally parse arguments inside parentheses (not required for length())
+                    if (currentToken.type != TOKEN_RPAREN) {
+                        parseCondition();  // Parse the argument
+                        while (currentToken.type == TOKEN_COMMA) {
+                            advance();  // Consume ','
+                            parseCondition();  // Parse the next argument
+                        }
+                    }
+
+                    match(TOKEN_RPAREN);  // Match closing ')'
+                }
+            } else {
+                error("Invalid dot notation: Expected identifier after '.'.");
+            }
+        }
     } else if (currentToken.type == TOKEN_LPAREN) { // Handle parentheses for sub-conditions
         match(TOKEN_LPAREN);
         parseCondition();
@@ -443,22 +614,90 @@ void parseCondition() {
 }
 
 
+// Parse <Input>
+void parseInput() {
+    match(TOKEN_INPUT);
+    match(TOKEN_LPAREN);
+    if (currentToken.type == TOKEN_STRING_LITERAL) {
+        advance(); // Consume the string literal
+    } else {
+        error("Expected a string literal for input prompt");
+    }
+    match(TOKEN_RPAREN);
+    match(TOKEN_SEMICOLON);
+}
+
+// Parse <ArrayDecl>
+void parseArrayDecl() {
+    match(TOKEN_ARRAY);
+    match(TOKEN_IDENTIFIER);
+    match(TOKEN_LBRACKET);
+    match(TOKEN_NUMBER); 
+    match(TOKEN_RBRACKET);
+    match(TOKEN_ASSIGN);
+    match(TOKEN_LBRACE);
+    parseArrayElements();
+    match(TOKEN_RBRACE);
+    match(TOKEN_SEMICOLON);
+}
+
+// Parse <ArrayAccess>
+
+void parseArrayAccess(){
+	match(TOKEN_LBRACKET);
+    parseExpression(); 
+    match(TOKEN_RBRACKET); 
+}
+
+void parseArrayElements() {
+    if (currentToken.type != TOKEN_RPAREN) { // If there are arguments
+        parseExpression(); // Parse the first argument
+        while (currentToken.type == TOKEN_COMMA) { // Handle additional arguments
+            match(TOKEN_COMMA);
+            parseExpression();
+        }
+    }
+}
+
+void parseFor(){
+	match(TOKEN_FOR);
+	match(TOKEN_LPAREN);
+	parseVarDecl();
+	parseCondition();
+	match(TOKEN_SEMICOLON);
+	match(TOKEN_IDENTIFIER);
+	match(TOKEN_ASSIGN);
+	parseExpression();
+	match(TOKEN_RPAREN);
+	match(TOKEN_LBRACE);
+	parseStatements();  // Parse the body of the loop
+    match(TOKEN_RBRACE);
+}
 
 // Main function to test the parser
 int main() {
-	sourceCode = 
-	    "main { \n"
-	    "var a = 5;"
-	    "var b = 2;"
-	
-	    "var anwser = (2 * (3 + a) - (2 / b)) - 2;"
-	    "print(\"Answer: \" + anwser);"
-	    "}";
-	    
+    // Specify the .epic file to be read
+    const char *filename = "Function.epic";
+
+    // Read the file content into sourceCode
+    readFile(filename);
+    
+    printf("Source code read from file:\n%s\n", sourceCode);
+    
+    // Print out all tokens before parsing
+    currentPos = 0;  // Reset current position
+    printf("TOKEN DUMP:\n");
+    Token debugToken;
+    do {
+        debugToken = getNextToken();
+        printToken(debugToken);
+    } while (debugToken.type != TOKEN_EOF);
+    
+    currentPos = 0;  // Reset again for parsing
+    
     advance();  // Initialize the first token
     parseGameProgram();
     printf("Parsing completed successfully.\n");
     return 0;
 }
-
 

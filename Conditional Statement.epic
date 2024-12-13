@@ -2,10 +2,10 @@ main{
     var age = input("Enter Your Age: ");
     var is_student= input("Are you a Student? (yes/no): ").strip().lower();
 
-    if age < 18 && is_student == "yes"{
+    if (age < 18 && is_student == "yes"){
         print("You qualify for a student discount!");
     }
-    elif age >= 18 && is_student == "yes"{
+    elif (age >= 18 && is_student == "yes"){
         print("You qualify for a student discount as an adult learner!");
     }
     else{
